@@ -8,11 +8,11 @@ pipeline {
 
     stages {
 
-        stage('Clone Code') {
-            steps {
-                git branch: 'main', url: 'https://github.com/Srshinde5512/mobile-security.git'
-            }
-        }
+        // stage('Clone Code') {
+        //     steps {
+        //         git branch: 'main', url: 'https://github.com/Srshinde5512/mobile-security.git'
+        //     }
+        // }
 
         stage('Build Docker Image') {
             steps {
