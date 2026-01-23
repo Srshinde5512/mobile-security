@@ -10,7 +10,7 @@ pipeline {
 
         stage('Clone Code') {
             steps {
-                git 'https://github.com/Srshinde5512/mobile-security.git'
+                git branch: 'main', url: 'https://github.com/Srshinde5512/mobile-security.git'
             }
         }
 
