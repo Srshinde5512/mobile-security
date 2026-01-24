@@ -7,18 +7,29 @@ kind: Pod
 spec:
   containers:
   - name: jnlp
-    image: jenkins/inbound-agent:3355.v388858a_47b_33-7
+    image: python:3.10-slim
+    env:
+    - name: JAVA_HOME
+      value: /opt/java/openjdk
     resources:
       limits:
-        memory: "2Gi"
+        memory: "3Gi"
         cpu: "1000m"
       requests:
-        memory: "1Gi"
+        memory: "1.5Gi"
         cpu: "500m"
+    volumeMounts:
+    - name: docker-sock
+      mountPath: /var/run/docker.sock
+    command: ["/bin/sh", "-c"]
+    args: ["apt-get update && apt-get install -y openjdk-17-jre git curl docker.io && exec /usr/local/bin/jenkins-agent"]
+  volumes:
+  - name: docker-sock
+    hostPath:
+      path: /var/run/docker.sock
 '''
         }
     }
-
     environment {
         KUBECONFIG_FILE = credentials('kubeconfig')
         IMAGE_NAME = "batataman26/mobile-security-framework-mobsf:${env.BUILD_ID}"
@@ -32,10 +43,21 @@ spec:
             }
         }
 
+        stage('Install Dependencies & Test') {
+            steps {
+                script {
+                    sh '''
+                        pip install poetry
+                        poetry install
+                        poetry run pytest --cov=mobsf --cov-report=xml:coverage.xml || true
+                    '''
+                }
+            }
+        }
+
         stage('SonarQube Analysis') {
             steps {
                 script {
-                    // Running with increased RAM and excluding the stuck file
                     withSonarQubeEnv('sonar-server') {
                         sh "${SCANNER_HOME}/bin/sonar-scanner \
                           -Dsonar.projectKey=mobsf-project \
@@ -45,6 +67,7 @@ spec:
                 }
             }
         }
+
         stage('Quality Gate') {
             steps {
                 timeout(time: 1, unit: 'HOURS') {
@@ -55,13 +78,13 @@ spec:
 
         stage('Build Docker Image') {
             steps {
+                // This now works because of the volumeMount in the agent spec
                 sh 'docker build -t $IMAGE_NAME .'
             }
         }
 
         stage('Trivy Security Scan') {
             steps {
-                // Scans the image we just built
                 sh "trivy image --exit-code 1 --severity CRITICAL $IMAGE_NAME"
             }
         }
@@ -69,7 +92,6 @@ spec:
         stage('Push Image') {
             steps {
                 script {
-                    // This uses the credentials ID 'dockerhub-creds' you created in Jenkins
                     docker.withRegistry('https://index.docker.io/v1/', 'dockerhub-creds') {
                         sh "docker push $IMAGE_NAME"
                     }
@@ -80,9 +102,7 @@ spec:
         stage('Deploy to Kubernetes') {
             steps {
                 script {
-                    // Dynamically update deployment.yaml to use the new build version
                     sh "sed -i 's|batataman26/mobile-security-framework-mobsf:latest|${IMAGE_NAME}|g' deployment.yaml"
-                    
                     sh 'kubectl --kubeconfig=$KUBECONFIG_FILE apply -f deployment.yaml'
                 }
             }
@@ -91,7 +111,6 @@ spec:
 
     post {
         always {
-            // Clean up the local image to save space on the Master node
             sh "docker rmi $IMAGE_NAME || true"
         }
     }
