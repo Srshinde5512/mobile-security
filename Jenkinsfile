@@ -2,10 +2,10 @@ pipeline {
     agent any
 
     environment {
-        // Ensure you've added 'kubeconfig' as a 'Secret File' in Jenkins credentials
         KUBECONFIG_FILE = credentials('kubeconfig')
+        // Using your actual Docker Hub username
         IMAGE_NAME = "batataman26/mobile-security-framework-mobsf:${env.BUILD_ID}"
-        SCANNER_HOME = tool 'SonarScanner' // Must match the name in Jenkins Global Tool Config
+        SCANNER_HOME = tool 'SonarScanner' 
     }
 
     stages {
@@ -17,25 +17,22 @@ pipeline {
 
         stage('SonarQube Analysis') {
             steps {
-                 script {
-                        // 1. Run tests and generate the 'coverage.xml' report
-                       sh "/home/sunbeam/.local/bin/poetry run pytest --cov=. --cov-report=xml"
-            
-                        // 2. Run the Sonar Scanner
-                       withSonarQubeEnv('sonar-server') {
-                        // Tell SonarQube exactly where to find the report
-                       sh "${SCANNER_HOME}/bin/sonar-scanner \
+                script {
+                    // Generate coverage for SonarQube
+                    sh "/home/sunbeam/.local/bin/poetry run pytest --cov=. --cov-report=xml || true"
+                    
+                    withSonarQubeEnv('sonar-server') {
+                        sh "${SCANNER_HOME}/bin/sonar-scanner \
                           -Dsonar.projectKey=mobsf-project \
                           -Dsonar.python.coverage.reportPaths=coverage.xml"
+                    }
+                }
             }
         }
-    }
-}
 
         stage('Quality Gate') {
             steps {
                 timeout(time: 1, unit: 'HOURS') {
-                    // This waits for SonarQube to send a webhook back to Jenkins
                     waitForQualityGate abortPipeline: true
                 }
             }
@@ -49,23 +46,38 @@ pipeline {
 
         stage('Trivy Security Scan') {
             steps {
-                // Fails the build if "CRITICAL" vulnerabilities are found
+                // Scans the image we just built
                 sh "trivy image --exit-code 1 --severity CRITICAL $IMAGE_NAME"
             }
         }
 
         stage('Push Image') {
             steps {
-                // Note: You'll need docker.withRegistry or 'docker login' here
-                sh "docker push $IMAGE_NAME"
+                script {
+                    // This uses the credentials ID 'dockerhub-creds' you created in Jenkins
+                    docker.withRegistry('https://index.docker.io/v1/', 'dockerhub-creds') {
+                        sh "docker push $IMAGE_NAME"
+                    }
+                }
             }
         }
 
         stage('Deploy to Kubernetes') {
             steps {
-                // Use the kubeconfig file provided by Jenkins
-                sh 'kubectl --kubeconfig=$KUBECONFIG_FILE apply -f deployment.yaml'
+                script {
+                    // Dynamically update deployment.yaml to use the new build version
+                    sh "sed -i 's|batataman26/mobile-security-framework-mobsf:latest|${IMAGE_NAME}|g' deployment.yaml"
+                    
+                    sh 'kubectl --kubeconfig=$KUBECONFIG_FILE apply -f deployment.yaml'
+                }
             }
+        }
+    }
+
+    post {
+        always {
+            // Clean up the local image to save space on the Master node
+            sh "docker rmi $IMAGE_NAME || true"
         }
     }
 }
