@@ -49,20 +49,22 @@ spec:
         }
         
         stage('Install Dependencies & Test') {
-            steps {
-                script {
-                    sh '''
-                        # Install poetry
-                        python3 -m pip install poetry --break-system-packages
-                        
-                        # Install dependencies including dev tools (pytest)
-                        python3 -m poetry install --with dev
-                        
-                        # Run tests and generate the coverage file SonarQube needs
-                        python3 -m poetry run pytest --cov=mobsf --cov-report=xml:coverage.xml || echo "Tests failed but continuing..."
-                    '''
-                }
+          steps {
+             script {
+              sh '''
+                # 1. Install poetry
+                python3 -m pip install poetry --break-system-packages
+                
+                # 2. Install EVERYTHING in the lockfile
+                # This ensures pytest is present
+                python3 -m poetry install
+                
+                # 3. Run the tests
+                # If pytest still isn't found, we use 'python3 -m pytest' to be safe
+                python3 -m poetry run python3 -m pytest --cov=mobsf --cov-report=xml:coverage.xml || echo "Tests failed or skipped"
+            '''
             }
+          }
         }
 
         stage('SonarQube Analysis') {
