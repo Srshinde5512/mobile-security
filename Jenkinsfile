@@ -8,7 +8,6 @@ spec:
   containers:
   - name: jnlp
     image: jenkins/inbound-agent:latest-jdk17
-    # This is the key fix: running the container as root
     securityContext:
       runAsUser: 0
     env:
@@ -16,16 +15,15 @@ spec:
       value: /opt/java/openjdk
     resources:
       limits:
+        memory: "4Gi"
+        cpu: "2000m"
+      requests:
         memory: "2Gi"
         cpu: "1000m"
-      requests:
-        memory: "1Gi"
-        cpu: "500m"
     volumeMounts:
     - name: docker-sock
       mountPath: /var/run/docker.sock
     command: ["/bin/sh", "-c"]
-    # Using 'which' to find the agent location automatically
     args: ["apt-get update && apt-get install -y python3 python3-pip git curl docker.io && exec $(which jenkins-agent)"]
   volumes:
   - name: docker-sock
@@ -55,13 +53,13 @@ spec:
                         # 1. Install poetry globally in the agent
                         python3 -m pip install poetry --break-system-packages
                         
-                        # 2. Try to install dependencies including dev/test groups
+                        # 2. Try to install dependencies
                         python3 -m poetry install --with test,dev || python3 -m poetry install
                         
-                        # 3. Explicitly ensure pytest is in the virtualenv to avoid "module not found"
+                        # 3. Explicitly ensure pytest is in the virtualenv
                         python3 -m poetry run pip install pytest pytest-cov 
                         
-                        # 4. Run tests and generate the report SonarQube needs
+                        # 4. Run tests
                         python3 -m poetry run pytest --cov=mobsf --cov-report=xml:coverage.xml || echo "Tests failed but continuing to analysis"
                     '''
                 }
@@ -75,6 +73,7 @@ spec:
                         sh "${SCANNER_HOME}/bin/sonar-scanner \
                           -Dsonar.projectKey=mobsf-project \
                           -Dsonar.exclusions=**/axml.py,**/StaticAnalyzer/tools/** \
+                          -Dsonar.javascript.node.maxspace=1024 \
                           -Dsonar.python.coverage.reportPaths=coverage.xml"
                     }
                 }
@@ -98,6 +97,7 @@ spec:
         stage('Push Image') {
             steps {
                 script {
+                    // Note: Ensure credential ID 'dockerhub-creds' exists in Jenkins
                     docker.withRegistry('https://index.docker.io/v1/', 'dockerhub-creds') {
                         sh "docker push ${IMAGE_NAME}"
                     }
@@ -118,11 +118,10 @@ spec:
     post {
         always {
             script {
-                // Safeguard against the MissingPropertyException
                 try {
                     sh "docker rmi ${IMAGE_NAME} || true"
                 } catch (Exception e) {
-                    echo "Could not remove image, likely because it was never defined: ${e.message}"
+                    echo "Could not remove image: ${e.message}"
                 }
             }
         }
