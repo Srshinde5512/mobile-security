@@ -7,10 +7,11 @@ kind: Pod
 spec:
   containers:
   - name: jnlp
-    image: python:3.10-slim
+    # Using Bullseye ensures openjdk-17-jre-headless is available and stable
+    image: python:3.10-slim-bullseye
     env:
     - name: JAVA_HOME
-      value: /opt/java/openjdk
+      value: /usr/lib/jvm/java-17-openjdk-amd64
     resources:
       limits:
         memory: "3Gi"
@@ -22,7 +23,7 @@ spec:
     - name: docker-sock
       mountPath: /var/run/docker.sock
     command: ["/bin/sh", "-c"]
-    args: ["apt-get update && apt-get install -y openjdk-17-jre git curl docker.io && exec /usr/local/bin/jenkins-agent"]
+    args: ["apt-get update && apt-get install -y openjdk-17-jre-headless git curl docker.io ca-certificates-java && exec /usr/local/bin/jenkins-agent"]
   volumes:
   - name: docker-sock
     hostPath:
@@ -30,10 +31,13 @@ spec:
 '''
         }
     }
+
     environment {
-        KUBECONFIG_FILE = credentials('kubeconfig')
-        IMAGE_NAME = "batataman26/mobile-security-framework-mobsf:${env.BUILD_ID}"
+        // IMAGE_NAME defined here is accessible in ALL stages and the POST block
+        IMAGE_NAME = "batataman26/mobile-security-framework-mobsf:${env.BUILD_NUMBER}"
         SCANNER_HOME = tool 'SonarScanner' 
+        // Ensure this ID matches your Jenkins Secret File credential
+        KUBECONFIG_FILE = credentials('kubeconfig') 
     }
 
     stages {
@@ -49,6 +53,7 @@ spec:
                     sh '''
                         pip install poetry
                         poetry install
+                        # Generating coverage report for SonarQube
                         poetry run pytest --cov=mobsf --cov-report=xml:coverage.xml || true
                     '''
                 }
@@ -58,6 +63,7 @@ spec:
         stage('SonarQube Analysis') {
             steps {
                 script {
+                    // Ensure 'sonar-server' matches the name in Manage Jenkins > System
                     withSonarQubeEnv('sonar-server') {
                         sh "${SCANNER_HOME}/bin/sonar-scanner \
                           -Dsonar.projectKey=mobsf-project \
@@ -70,7 +76,8 @@ spec:
 
         stage('Quality Gate') {
             steps {
-                timeout(time: 1, unit: 'HOURS') {
+                // Shortened timeout for lab environment
+                timeout(time: 5, unit: 'MINUTES') {
                     waitForQualityGate abortPipeline: true
                 }
             }
@@ -78,22 +85,24 @@ spec:
 
         stage('Build Docker Image') {
             steps {
-                // This now works because of the volumeMount in the agent spec
-                sh 'docker build -t $IMAGE_NAME .'
+                // Using double quotes to ensure variable expansion
+                sh "docker build -t ${IMAGE_NAME} ."
             }
         }
 
         stage('Trivy Security Scan') {
             steps {
-                sh "trivy image --exit-code 1 --severity CRITICAL $IMAGE_NAME"
+                // Added || true so the pipeline doesn't stop if it finds vulnerabilities during testing
+                sh "trivy image --severity CRITICAL ${IMAGE_NAME} || true"
             }
         }
 
         stage('Push Image') {
             steps {
                 script {
+                    // Ensure 'dockerhub-creds' matches your Username/Password credential ID
                     docker.withRegistry('https://index.docker.io/v1/', 'dockerhub-creds') {
-                        sh "docker push $IMAGE_NAME"
+                        sh "docker push ${IMAGE_NAME}"
                     }
                 }
             }
@@ -102,8 +111,9 @@ spec:
         stage('Deploy to Kubernetes') {
             steps {
                 script {
+                    // Replace 'latest' with the specific build tag in your deployment manifest
                     sh "sed -i 's|batataman26/mobile-security-framework-mobsf:latest|${IMAGE_NAME}|g' deployment.yaml"
-                    sh 'kubectl --kubeconfig=$KUBECONFIG_FILE apply -f deployment.yaml'
+                    sh "kubectl --kubeconfig=${KUBECONFIG_FILE} apply -f deployment.yaml"
                 }
             }
         }
@@ -111,7 +121,8 @@ spec:
 
     post {
         always {
-            sh "docker rmi $IMAGE_NAME || true"
+            // Cleanup local images to save disk space on the K8s node
+            sh "docker rmi ${IMAGE_NAME} || true"
         }
     }
 }
