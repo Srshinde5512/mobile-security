@@ -48,23 +48,24 @@ spec:
             }
         }
         
-        stage('Install Dependencies & Test') {
-          steps {
-             script {
-              sh '''
-                # 1. Install poetry
-                python3 -m pip install poetry --break-system-packages
-                
-                # 2. Install EVERYTHING in the lockfile
-                # This ensures pytest is present
-                python3 -m poetry install
-                
-                # 3. Run the tests
-                # If pytest still isn't found, we use 'python3 -m pytest' to be safe
-                python3 -m poetry run python3 -m pytest --cov=mobsf --cov-report=xml:coverage.xml || echo "Tests failed or skipped"
-            '''
+       stage('Install Dependencies & Test') {
+            steps {
+                script {
+                    sh '''
+                        # 1. Install poetry globally in the agent
+                        python3 -m pip install poetry --break-system-packages
+                        
+                        # 2. Try to install dependencies including dev/test groups
+                        python3 -m poetry install --with test,dev || python3 -m poetry install
+                        
+                        # 3. Explicitly ensure pytest is in the virtualenv to avoid "module not found"
+                        python3 -m poetry run pip install pytest pytest-cov 
+                        
+                        # 4. Run tests and generate the report SonarQube needs
+                        python3 -m poetry run pytest --cov=mobsf --cov-report=xml:coverage.xml || echo "Tests failed but continuing to analysis"
+                    '''
+                }
             }
-          }
         }
 
         stage('SonarQube Analysis') {
