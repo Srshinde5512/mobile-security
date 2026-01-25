@@ -7,23 +7,25 @@ kind: Pod
 spec:
   containers:
   - name: jnlp
-    # Using Bullseye ensures openjdk-17-jre-headless is available and stable
-    image: python:3.10-slim-bullseye
+    # Use the official Jenkins agent image which already has Java and the agent binary
+    image: jenkins/inbound-agent:latest-jdk17
+    user: root
     env:
     - name: JAVA_HOME
-      value: /usr/lib/jvm/java-17-openjdk-amd64
+      value: /opt/java/openjdk
     resources:
       limits:
-        memory: "3Gi"
+        memory: "2Gi"
         cpu: "1000m"
       requests:
-        memory: "1.5Gi"
+        memory: "1Gi"
         cpu: "500m"
     volumeMounts:
     - name: docker-sock
       mountPath: /var/run/docker.sock
+    # We only need to install Python and Docker CLI now
     command: ["/bin/sh", "-c"]
-    args: ["apt-get update && apt-get install -y openjdk-17-jre-headless git curl docker.io ca-certificates-java && exec /usr/local/bin/jenkins-agent"]
+    args: ["apt-get update && apt-get install -y python3 python3-pip git curl docker.io && exec jenkins-agent"]
   volumes:
   - name: docker-sock
     hostPath:
@@ -33,10 +35,9 @@ spec:
     }
 
     environment {
-        // IMAGE_NAME defined here is accessible in ALL stages and the POST block
+        // Defined here for global access
         IMAGE_NAME = "batataman26/mobile-security-framework-mobsf:${env.BUILD_NUMBER}"
         SCANNER_HOME = tool 'SonarScanner' 
-        // Ensure this ID matches your Jenkins Secret File credential
         KUBECONFIG_FILE = credentials('kubeconfig') 
     }
 
@@ -50,11 +51,11 @@ spec:
         stage('Install Dependencies & Test') {
             steps {
                 script {
+                    // Use 'python3 -m pip' to avoid path issues
                     sh '''
-                        pip install poetry
-                        poetry install
-                        # Generating coverage report for SonarQube
-                        poetry run pytest --cov=mobsf --cov-report=xml:coverage.xml || true
+                        python3 -m pip install poetry
+                        python3 -m poetry install
+                        python3 -m poetry run pytest --cov=mobsf --cov-report=xml:coverage.xml || true
                     '''
                 }
             }
