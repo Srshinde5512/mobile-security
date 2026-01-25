@@ -47,14 +47,19 @@ spec:
                 git branch: 'main', url: 'https://github.com/Srshinde5512/mobile-security.git'
             }
         }
-
+        
         stage('Install Dependencies & Test') {
             steps {
                 script {
                     sh '''
-                        python3 -m pip install poetry --break-system-packages || pip install poetry
-                        python3 -m poetry install
-                        python3 -m poetry run pytest --cov=mobsf --cov-report=xml:coverage.xml || true
+                        # Install poetry
+                        python3 -m pip install poetry --break-system-packages
+                        
+                        # Install dependencies including dev tools (pytest)
+                        python3 -m poetry install --with dev
+                        
+                        # Run tests and generate the coverage file SonarQube needs
+                        python3 -m poetry run pytest --cov=mobsf --cov-report=xml:coverage.xml || echo "Tests failed but continuing..."
                     '''
                 }
             }
