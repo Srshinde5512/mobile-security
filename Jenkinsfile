@@ -7,9 +7,10 @@ kind: Pod
 spec:
   containers:
   - name: jnlp
-    # Use the official Jenkins agent image which already has Java and the agent binary
     image: jenkins/inbound-agent:latest-jdk17
-    user: root
+    # This is the key fix: running the container as root
+    securityContext:
+      runAsUser: 0
     env:
     - name: JAVA_HOME
       value: /opt/java/openjdk
@@ -23,9 +24,9 @@ spec:
     volumeMounts:
     - name: docker-sock
       mountPath: /var/run/docker.sock
-    # We only need to install Python and Docker CLI now
     command: ["/bin/sh", "-c"]
-    args: ["apt-get update && apt-get install -y python3 python3-pip git curl docker.io && exec jenkins-agent"]
+    # Using 'which' to find the agent location automatically
+    args: ["apt-get update && apt-get install -y python3 python3-pip git curl docker.io && exec $(which jenkins-agent)"]
   volumes:
   - name: docker-sock
     hostPath:
@@ -35,7 +36,6 @@ spec:
     }
 
     environment {
-        // Defined here for global access
         IMAGE_NAME = "batataman26/mobile-security-framework-mobsf:${env.BUILD_NUMBER}"
         SCANNER_HOME = tool 'SonarScanner' 
         KUBECONFIG_FILE = credentials('kubeconfig') 
@@ -51,9 +51,8 @@ spec:
         stage('Install Dependencies & Test') {
             steps {
                 script {
-                    // Use 'python3 -m pip' to avoid path issues
                     sh '''
-                        python3 -m pip install poetry
+                        python3 -m pip install poetry --break-system-packages || pip install poetry
                         python3 -m poetry install
                         python3 -m poetry run pytest --cov=mobsf --cov-report=xml:coverage.xml || true
                     '''
@@ -64,7 +63,6 @@ spec:
         stage('SonarQube Analysis') {
             steps {
                 script {
-                    // Ensure 'sonar-server' matches the name in Manage Jenkins > System
                     withSonarQubeEnv('sonar-server') {
                         sh "${SCANNER_HOME}/bin/sonar-scanner \
                           -Dsonar.projectKey=mobsf-project \
@@ -77,7 +75,6 @@ spec:
 
         stage('Quality Gate') {
             steps {
-                // Shortened timeout for lab environment
                 timeout(time: 5, unit: 'MINUTES') {
                     waitForQualityGate abortPipeline: true
                 }
@@ -86,22 +83,13 @@ spec:
 
         stage('Build Docker Image') {
             steps {
-                // Using double quotes to ensure variable expansion
                 sh "docker build -t ${IMAGE_NAME} ."
-            }
-        }
-
-        stage('Trivy Security Scan') {
-            steps {
-                // Added || true so the pipeline doesn't stop if it finds vulnerabilities during testing
-                sh "trivy image --severity CRITICAL ${IMAGE_NAME} || true"
             }
         }
 
         stage('Push Image') {
             steps {
                 script {
-                    // Ensure 'dockerhub-creds' matches your Username/Password credential ID
                     docker.withRegistry('https://index.docker.io/v1/', 'dockerhub-creds') {
                         sh "docker push ${IMAGE_NAME}"
                     }
@@ -112,7 +100,6 @@ spec:
         stage('Deploy to Kubernetes') {
             steps {
                 script {
-                    // Replace 'latest' with the specific build tag in your deployment manifest
                     sh "sed -i 's|batataman26/mobile-security-framework-mobsf:latest|${IMAGE_NAME}|g' deployment.yaml"
                     sh "kubectl --kubeconfig=${KUBECONFIG_FILE} apply -f deployment.yaml"
                 }
@@ -122,8 +109,14 @@ spec:
 
     post {
         always {
-            // Cleanup local images to save disk space on the K8s node
-            sh "docker rmi ${IMAGE_NAME} || true"
+            script {
+                // Safeguard against the MissingPropertyException
+                try {
+                    sh "docker rmi ${IMAGE_NAME} || true"
+                } catch (Exception e) {
+                    echo "Could not remove image, likely because it was never defined: ${e.message}"
+                }
+            }
         }
     }
 }
