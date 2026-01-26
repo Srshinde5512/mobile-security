@@ -50,7 +50,7 @@ ARG TARGETPLATFORM
 
 # Install wkhtmltopdf, OpenJDK and jadx
 COPY scripts/dependencies.sh mobsf/MobSF/tools_download.py ./
-RUN ./dependencies.sh
+RUN sh ./dependencies.sh
 
 # Install Python dependencies
 COPY pyproject.toml .
