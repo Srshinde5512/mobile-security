@@ -60,7 +60,8 @@ spec:
                         python3 -m poetry run pip install pytest pytest-cov 
                         
                         # 4. Run tests
-                        python3 -m poetry run pytest --cov=mobsf --cov-report=xml:coverage.xml || echo "Tests failed but continuing to analysis"
+                        # Correct command to find and run MobSF tests
+                        python3 -m poetry run pytest tests/ --cov=mobsf --cov-report=xml:coverage.xml || echo "Tests failed but generating report"
                     '''
                 }
             }
