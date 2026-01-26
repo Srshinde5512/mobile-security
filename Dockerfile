@@ -1,7 +1,7 @@
 # Base image
 FROM python:3.13-slim-bookworm
 
-
+# Set Environment Variables
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=en_US.UTF-8 \
     LANGUAGE=en_US:en \
@@ -18,7 +18,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     DJANGO_SUPERUSER_USERNAME=mobsf \
     DJANGO_SUPERUSER_PASSWORD=mobsf
 
-# See https://docs.docker.com/develop/develop-images/dockerfile_best-practices/#run
+# Install System Dependencies
 RUN apt update -y && \
     apt install -y --no-install-recommends \
     android-sdk-build-tools \
@@ -48,44 +48,42 @@ RUN apt update -y && \
 
 ARG TARGETPLATFORM
 
-# Install wkhtmltopdf, OpenJDK and jadx
-COPY scripts/dependencies.sh mobsf/MobSF/tools_download.py ./
-RUN sh ./dependencies.sh
-
-# Install Python dependencies
-COPY pyproject.toml .
-RUN poetry config virtualenvs.create false && \
-  poetry lock && \
-  poetry install --only main --no-root --no-interaction --no-ansi && \
-  poetry cache clear . --all --no-interaction && \
-  rm -rf /root/.cache/
-
-# Cleanup
-RUN \
-    apt remove -y \
-        git \
-        python3-dev \
-        wget && \
-    apt clean && \
-    apt autoclean && \
-    apt autoremove -y && \
-    rm -rf /var/lib/apt/lists/* /tmp/* > /dev/null 2>&1
-
-# Copy source code
+# 1. Setup working directory for the scripts phase
 WORKDIR /home/mobsf/Mobile-Security-Framework-MobSF
+
+# 2. Install wkhtmltopdf, OpenJDK and jadx via script
+# We use 'bash' instead of 'sh' to avoid "Permission Denied" and shell compatibility issues
+COPY scripts/dependencies.sh mobsf/MobSF/tools_download.py ./
+RUN bash ./dependencies.sh
+
+# 3. Install Python dependencies
+COPY pyproject.toml poetry.lock* ./
+RUN /root/.local/bin/poetry config virtualenvs.create false && \
+    /root/.local/bin/poetry install --only main --no-root --no-interaction --no-ansi && \
+    rm -rf /root/.cache/
+
+# 4. Copy the rest of the source code
 COPY . .
 
+# 5. Fix permissions for the entrypoint and the mobsf user
+# This is crucial because the 'mobsf' user needs to execute the start script
+RUN chmod +x scripts/entrypoint.sh && \
+    groupadd --gid $USER_ID $MOBSF_USER && \
+    useradd $MOBSF_USER --uid $USER_ID --gid $USER_ID --shell /bin/bash && \
+    chown -R $MOBSF_USER:$MOBSF_USER /home/mobsf
+
+# 6. Final Cleanup of build-only tools to reduce image size
+RUN apt remove -y git python3-dev wget && \
+    apt autoremove -y && apt clean -y && \
+    rm -rf /var/lib/apt/lists/* /tmp/*
+
+# Healthcheck
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 CMD curl -f http://localhost:8000/ || exit 1
 
 # Expose MobSF Port and Proxy Port
 EXPOSE 8000 1337
 
-# Create mobsf user
-RUN groupadd --gid $USER_ID $MOBSF_USER && \
-    useradd $MOBSF_USER --uid $USER_ID --gid $MOBSF_USER --shell /bin/false && \
-    chown -R $MOBSF_USER:$MOBSF_USER /home/mobsf
-
-# Switch to mobsf user
+# Switch to non-root user for security
 USER $MOBSF_USER
 
 # Run MobSF
