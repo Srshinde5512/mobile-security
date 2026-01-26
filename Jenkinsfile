@@ -89,10 +89,15 @@ spec:
         }
 
         stage('Build Docker Image') {
-            steps {
-                sh "docker build -t ${IMAGE_NAME} ."
-            }
+           steps {
+               script {
+            // This ensures Debian treats the script as a runnable program 
+            // before the Docker context is sent to the builder
+                      sh "chmod +x scripts/dependencies.sh"
+                      sh "docker build -t ${IMAGE_NAME} ."
         }
+    }
+}
 
         stage('Push Image') {
             steps {
